@@ -4,6 +4,6 @@ package main
 func main() {
 
 	g := createTestGraph()
-	g.runGraph()
+	g.RunDag()
 }
 

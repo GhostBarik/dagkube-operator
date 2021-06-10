@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -11,7 +12,26 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	"path/filepath"
+	"time"
 )
+
+type KubeTask struct {
+	// generated during graph parsing, do not change!
+	Id TaskId
+	// task metadata (e.g. which image to run, arguments etc.)
+	Metadata TaskMetadata
+}
+
+func (n *KubeTask) GetId() TaskId {
+	return n.Id
+}
+
+func (n *KubeTask) Run() error {
+	fmt.Printf("task[%v]: started\n", n.Metadata.Name)
+	time.Sleep(1 * time.Second)
+	fmt.Printf("task[%v]: finished\n", n.Metadata.Name)
+	return nil
+}
 
 func CreateJobClient(namespace string) b1.JobInterface {
 

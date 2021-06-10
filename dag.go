@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"time"
+	"golang.org/x/sync/errgroup"
 )
 
 type TaskId int
@@ -20,29 +20,12 @@ type Task interface {
 	Run() error
 }
 
-type Graph struct {
+type Dag struct {
 	// our graph has always single defined root node, from which we start
-	RootNode Task
-	Nodes map[TaskId]Task
+	RootTask Task
+	Tasks map[TaskId]Task
 	Edges map[TaskId][]TaskId
-}
-
-type KubeTask struct {
-	// generated during graph parsing, do not change!
-	Id TaskId
-	// task metadata (e.g. which image to run, arguments etc.)
-	Metadata TaskMetadata
-}
-
-func (n *KubeTask) GetId() TaskId {
-	return n.Id
-}
-
-func (n *KubeTask) Run() error {
-	fmt.Printf("task[%v]: started\n", n.Metadata.Name)
-	time.Sleep(1 * time.Second)
-	fmt.Printf("task[%v]: finished\n", n.Metadata.Name)
-	return nil
+	Errors e
 }
 
 // FIXME: temporary structure, remove
@@ -55,7 +38,7 @@ type Task2 struct {
 type WaitMap map[TaskId][]Task2
 type NotifyMap map[TaskId][]chan bool
 
-func (g *Graph) runGraph () {
+func (g *Dag) RunDag() {
 
 	// start from root node
 	fmt.Println("start graph processing")
@@ -93,17 +76,17 @@ func (g *Graph) runGraph () {
 	fmt.Printf("notify map: %v\n", notifyMap)
 
 	singleRun := DagRun{
-		graph: *g,
+		dag: *g,
 		visitedNodes: &visitedSet,
 		waitMap: waitMap,
 		notifyMap: notifyMap,
 	}
 
-	singleRun.processTask(g.RootNode.GetId())
+	singleRun.processTask(g.RootTask.GetId())
 }
 
 type DagRun struct {
-	graph Graph
+	dag Dag
 	visitedNodes *SynchronizedIntSet
 	waitMap WaitMap
 	notifyMap NotifyMap
@@ -116,7 +99,7 @@ func (dagRun *DagRun) processTask (taskId TaskId) {
 		return
 	}
 
-	graph := dagRun.graph
+	graph := dagRun.dag
 
 	// run all children in parallel
 	for _, childId := range graph.Edges[taskId] {
@@ -129,9 +112,9 @@ func (dagRun *DagRun) processTask (taskId TaskId) {
 	}
 
 	// root node does not perform any processing
-	if taskId != graph.RootNode.GetId() {
+	if taskId != graph.RootTask.GetId() {
 		// TODO: handle error (not necessary now)
-		_ = graph.Nodes[taskId].Run()
+		_ = graph.Tasks[taskId].Run()
 	}
 
 	// send completion signal to dependent nodes
