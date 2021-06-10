@@ -58,8 +58,6 @@ func (n *KubeTask) Run() error {
 		jobName, result.GetObjectMeta().GetName(),
 	)
 
-	//var numberOfCompletionToSucceed int32 = 1
-
 	// watch for the job status
 	for {
 
@@ -84,6 +82,9 @@ func (n *KubeTask) Run() error {
 			)
 			return nil
 		}
+
+		// TODO: check job success value instead??? (i.e. do not rely on our number of restarts)
+		// TODO: if there is some parameter, that just says "job has failde after all the reties"?
 		if numberOfFailures > retries {
 			fmt.Printf(
 				"KubeTask(%v): finished with error %q.\n",
