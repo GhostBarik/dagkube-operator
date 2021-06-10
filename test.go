@@ -31,7 +31,7 @@ func (n *KubeTask) Run() error {
 	return nil
 }
 
-func createTestGraph() Graph {
+func createTestGraph() TaskDependencyGraph {
 
 	nodeA := KubeTask{Id: 0, Metadata: KubeTaskMetadata{
 		"JobA", "acrdagkube.azurecr.io/dagkube-poc:v0.1.0", []string{"30", "0.8"}, 1,
@@ -69,5 +69,5 @@ func createTestGraph() Graph {
 	edges[nodeD.Id] = []TaskId{}
 	edges[rootNode.Id] = []TaskId{nodeA.Id, nodeB.Id, nodeC.Id, nodeD.Id}
 
-	return Graph{&rootNode, nodes, edges}
+	return TaskDependencyGraph{&rootNode, nodes, edges}
 }

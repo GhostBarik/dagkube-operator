@@ -11,17 +11,17 @@ type Task interface {
 	Run() error
 }
 
-type Graph struct {
+type TaskDependencyGraph struct {
 	// our graph has always single defined root node, from which we start
-	RootNode Task
-	Nodes    map[TaskId]Task
-	Edges    map[TaskId][]TaskId
+	RootTask     Task
+	Tasks        map[TaskId]Task
+	Dependencies map[TaskId][]TaskId
 }
 
 type WaitMap map[TaskId][]chan bool
 type NotifyMap map[TaskId][]chan bool
 
-func (g *Graph) runGraph() {
+func (g *TaskDependencyGraph) runGraph() {
 
 	// start from root node
 	fmt.Println("start graph processing")
@@ -36,7 +36,7 @@ func (g *Graph) runGraph() {
 	notifyMap := make(NotifyMap)
 
 	// initialize both maps with channels
-	for startNodeId, children := range g.Edges {
+	for startNodeId, children := range g.Dependencies {
 		for _, endNodeId := range children {
 
 			// create buffered channel with buffer size == 1
@@ -60,11 +60,11 @@ func (g *Graph) runGraph() {
 		notifyMap:    notifyMap,
 	}
 
-	singleRun.processTask(g.RootNode.GetId())
+	singleRun.processTask(g.RootTask.GetId())
 }
 
 type DagRun struct {
-	graph        Graph
+	graph        TaskDependencyGraph
 	visitedNodes *SynchronizedIntSet
 	waitMap      WaitMap
 	notifyMap    NotifyMap
@@ -80,7 +80,7 @@ func (dagRun *DagRun) processTask(taskId TaskId) {
 	graph := dagRun.graph
 
 	// run all children in parallel
-	for _, childId := range graph.Edges[taskId] {
+	for _, childId := range graph.Dependencies[taskId] {
 		go dagRun.processTask(childId)
 	}
 
@@ -89,10 +89,10 @@ func (dagRun *DagRun) processTask(taskId TaskId) {
 		<-resultCh
 	}
 
-	// root node does not perform any processing
-	if taskId != graph.RootNode.GetId() {
+	// root task does not perform any processing
+	if taskId != graph.RootTask.GetId() {
 		// TODO: handle error (not necessary now)
-		_ = graph.Nodes[taskId].Run()
+		_ = graph.Tasks[taskId].Run()
 	}
 
 	// send completion signal to dependent nodes
