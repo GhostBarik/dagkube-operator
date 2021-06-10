@@ -1,53 +1,34 @@
 package main
 
-import (
-	"fmt"
-	"time"
-)
-
-type KubeTask struct {
-	// generated during graph parsing / creation
-	Id TaskId
-	// task metadata (e.g. which image to run, arguments etc.)
-	Metadata KubeTaskMetadata
-}
-
-type KubeTaskMetadata struct {
-	Name            string
-	Image           string   // url of the docker image (with tag)
-	Args            []string // list of string arguments to pass
-	NumberOfRetries int
-	// TODO: add additional properties (e.g. container limits)
-}
-
-func (n *KubeTask) GetId() TaskId {
-	return n.Id
-}
-
-func (n *KubeTask) Run() error {
-	fmt.Printf("task[%v]: started\n", n.Metadata.Name)
-	time.Sleep(1 * time.Second)
-	fmt.Printf("task[%v]: finished\n", n.Metadata.Name)
-	return nil
-}
-
 func createTestGraph() TaskDependencyGraph {
 
+	namespace := "default"
+
+	image := "acrdagkube.azurecr.io/dagkube-poc:v0.1.0"
+	params := []string{"1", "0.8"}
+	retries := 3
+
+	jobClient := CreateJobClient(namespace)
+
 	nodeA := KubeTask{Id: 0, Metadata: KubeTaskMetadata{
-		"JobA", "acrdagkube.azurecr.io/dagkube-poc:v0.1.0", []string{"30", "0.8"}, 1,
-	}}
+		"job-a", image, params, retries},
+		jobClient: jobClient,
+	}
 
 	nodeB := KubeTask{Id: 1, Metadata: KubeTaskMetadata{
-		"JobB", "acrdagkube.azurecr.io/dagkube-poc:v0.1.0", []string{"30", "0.8"}, 1,
-	}}
+		"job-b", image, params, retries},
+		jobClient: jobClient,
+	}
 
 	nodeC := KubeTask{Id: 2, Metadata: KubeTaskMetadata{
-		"JobC", "acrdagkube.azurecr.io/dagkube-poc:v0.1.0", []string{"30", "0.8"}, 1,
-	}}
+		"job-c", image, params, retries},
+		jobClient: jobClient,
+	}
 
 	nodeD := KubeTask{Id: 3, Metadata: KubeTaskMetadata{
-		"JobD", "acrdagkube.azurecr.io/dagkube-poc:v0.1.0", []string{"30", "0.8"}, 1,
-	}}
+		"job-d", image, params, retries},
+		jobClient: jobClient,
+	}
 
 	rootNode := KubeTask{Id: 4, Metadata: KubeTaskMetadata{
 		Name: "GraphRoot",

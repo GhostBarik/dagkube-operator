@@ -33,6 +33,7 @@ func CreateJobClient(namespace string) b1.JobInterface {
 	if err != nil {
 		panic(err)
 	}
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(err)
@@ -41,23 +42,24 @@ func CreateJobClient(namespace string) b1.JobInterface {
 	return clientset.BatchV1().Jobs(namespace)
 }
 
-func CreateJobDefinition(jobName string, containerName string) batchv1.Job {
+func CreateJobDefinition(jobName string, image string, containerName string, retries int32) batchv1.Job {
 	return batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: jobName,
 		},
 		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec {
+			BackoffLimit: &retries,
+			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: "Never",
 					Containers: []corev1.Container{{
-						Name: containerName,
-						Image: "acrdagkube.azurecr.io/dagkube-poc:v0.1.0",
-						Args: []string{ "30", "0.8" },
-						ImagePullPolicy: "Always",
+						Name:            containerName,
+						Image:           image,
+						Args:            []string{"30", "0.8"},
+						ImagePullPolicy: "IfNotPresent",
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{
-								"cpu": resource.MustParse("300m"),
+								"cpu":    resource.MustParse("300m"),
 								"memory": resource.MustParse("256Mi"),
 							},
 						},
