@@ -2,18 +2,9 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
 type TaskId int
-
-type TaskMetadata struct {
-	Name string
-	Image string  // url of the docker image (with tag)
-	Args []string // list of string arguments to pass
-	NumberOfRetries int
-	// TODO: add additional properties (e.g. container limits)
-}
 
 type Task interface {
 	GetId() TaskId
@@ -23,93 +14,63 @@ type Task interface {
 type Graph struct {
 	// our graph has always single defined root node, from which we start
 	RootNode Task
-	Nodes map[TaskId]Task
-	Edges map[TaskId][]TaskId
+	Nodes    map[TaskId]Task
+	Edges    map[TaskId][]TaskId
 }
 
-type KubeTask struct {
-	// generated during graph parsing, do not change!
-	Id TaskId
-	// task metadata (e.g. which image to run, arguments etc.)
-	Metadata TaskMetadata
-}
-
-func (n *KubeTask) GetId() TaskId {
-	return n.Id
-}
-
-func (n *KubeTask) Run() error {
-	fmt.Printf("task[%v]: started\n", n.Metadata.Name)
-	time.Sleep(1 * time.Second)
-	fmt.Printf("task[%v]: finished\n", n.Metadata.Name)
-	return nil
-}
-
-// FIXME: temporary structure, remove
-type Task2 struct {
-	NodeId TaskId
-	result chan bool
-}
-
-// FIXME: remove task2
-type WaitMap map[TaskId][]Task2
+type WaitMap map[TaskId][]chan bool
 type NotifyMap map[TaskId][]chan bool
 
-func (g *Graph) runGraph () {
+func (g *Graph) runGraph() {
 
 	// start from root node
 	fmt.Println("start graph processing")
 
 	// create set for storing visited nodes
-	visitedSet := SynchronizedIntSet{ set: make(map[int]bool) }
+	visitedSet := SynchronizedIntSet{set: make(map[int]bool)}
 
 	// create wait map (node -> list of nodes to wait for)
 	waitMap := make(WaitMap)
+
+	// create notify map (node -> list of nodes to notify)
+	notifyMap := make(NotifyMap)
+
+	// initialize both maps with channels
 	for startNodeId, children := range g.Edges {
-		waitMap[startNodeId] = make([]Task2, 0)
 		for _, endNodeId := range children {
+
 			// create buffered channel with buffer size == 1
 			// this will prevent notifier nodes from blocking
 			// (i.e. while iterating through list of node to notify - in notifyMap[nodeId])
-			task := Task2{ endNodeId, make(chan bool, 1) }
-			waitMap[startNodeId] = append(waitMap[startNodeId], task)
+			ch := make(chan bool, 1)
+
+			// put channel to both maps (wait/notify)
+			waitMap[startNodeId] = append(waitMap[startNodeId], ch)
+			notifyMap[endNodeId] = append(notifyMap[endNodeId], ch)
 		}
 	}
 
 	fmt.Printf("wait map: %v\n", waitMap)
-
-	// create notify map (node -> list of nodes to notify)
-	notifyMap := make(NotifyMap)
-	for startNodeId, _ := range waitMap {
-		notifyMap[startNodeId] = make([]chan bool, 0)
-	}
-	for _, tasks := range waitMap {
-		for _, task := range tasks {
-			endNode := task.NodeId
-			notifyMap[endNode] = append(notifyMap[endNode], task.result)
-		}
-	}
-
 	fmt.Printf("notify map: %v\n", notifyMap)
 
 	singleRun := DagRun{
-		graph: *g,
+		graph:        *g,
 		visitedNodes: &visitedSet,
-		waitMap: waitMap,
-		notifyMap: notifyMap,
+		waitMap:      waitMap,
+		notifyMap:    notifyMap,
 	}
 
 	singleRun.processTask(g.RootNode.GetId())
 }
 
 type DagRun struct {
-	graph Graph
+	graph        Graph
 	visitedNodes *SynchronizedIntSet
-	waitMap WaitMap
-	notifyMap NotifyMap
+	waitMap      WaitMap
+	notifyMap    NotifyMap
 }
 
-func (dagRun *DagRun) processTask (taskId TaskId) {
+func (dagRun *DagRun) processTask(taskId TaskId) {
 
 	if ok := dagRun.visitedNodes.addElement(int(taskId)); !ok {
 		// node was already visited -> exit
@@ -125,7 +86,7 @@ func (dagRun *DagRun) processTask (taskId TaskId) {
 
 	// wait for completion for all dependencies
 	for _, resultCh := range dagRun.waitMap[taskId] {
-		<- resultCh.result
+		<-resultCh
 	}
 
 	// root node does not perform any processing
@@ -139,5 +100,3 @@ func (dagRun *DagRun) processTask (taskId TaskId) {
 		channel <- true // signal completion
 	}
 }
-
-
