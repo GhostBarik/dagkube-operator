@@ -42,7 +42,7 @@ func CreateJobClient(namespace string) b1.JobInterface {
 	return clientset.BatchV1().Jobs(namespace)
 }
 
-func CreateJobDefinition(jobName string, image string, containerName string, retries int32) batchv1.Job {
+func CreateJobDefinition(jobName string, image string, containerName string, params []string, retries int32) batchv1.Job {
 	return batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: jobName,
@@ -55,7 +55,7 @@ func CreateJobDefinition(jobName string, image string, containerName string, ret
 					Containers: []corev1.Container{{
 						Name:            containerName,
 						Image:           image,
-						Args:            []string{"30", "0.8"},
+						Args:            params,
 						ImagePullPolicy: "IfNotPresent",
 						Resources: corev1.ResourceRequirements{
 							Limits: corev1.ResourceList{

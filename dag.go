@@ -94,19 +94,20 @@ func (dagRun *DagRun) processTask(taskId TaskId) {
 		}
 	}
 
-	var jobSuccess = true
+	fmt.Printf("task[%v]: state for all dependencies -  %v\n", taskId, dependenciesWereSuccessful)
+
+	var currentJobSuccess = dependenciesWereSuccessful
 
 	// root task does not perform any processing
 	if taskId != graph.RootTask.GetId() && dependenciesWereSuccessful {
-		// TODO: handle error (not necessary now)
 		err := graph.Tasks[taskId].Run()
 		if err != nil {
-			jobSuccess = false
+			currentJobSuccess = false
 		}
 	}
 
 	// send completion signal to dependent nodes
 	for _, channel := range dagRun.notifyMap[taskId] {
-		channel <- jobSuccess // signal completion
+		channel <- currentJobSuccess // signal completion
 	}
 }

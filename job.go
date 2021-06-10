@@ -37,13 +37,14 @@ func (n *KubeTask) GetId() TaskId {
 
 func (n *KubeTask) Run() error {
 
-	image := "acrdagkube.azurecr.io/dagkube-poc:v0.1.0"
+	image := "acrdagkube.azurecr.io/dagkube-poc:v0.1.1"
 	jobBaseName := "dagkube"
 	containerName := "dagkube-job-container"
-	retries := 3
+	retries := int32(2)
 	jobName := jobBaseName + "-" + n.Metadata.Name
+	params := []string{"1", "0.5"}
 
-	jobDefinition := CreateJobDefinition(jobName, image, containerName, int32(retries))
+	jobDefinition := CreateJobDefinition(jobName, image, containerName, params, int32(retries))
 
 	// create the job
 	result, err := n.jobClient.Create(context.TODO(), &jobDefinition, metav1.CreateOptions{})
@@ -64,25 +65,26 @@ func (n *KubeTask) Run() error {
 
 		result, _ = n.jobClient.Get(context.TODO(), jobName, metav1.GetOptions{})
 
-		successCheck := result.Status.Succeeded
-		fmt.Printf("status: %v\n", successCheck)
+		numberOfSuccesses := result.Status.Succeeded
+		numberOfFailures := result.Status.Failed
+
+		fmt.Printf("status: %v\n", numberOfSuccesses)
 
 		fmt.Printf(
-			"KubeTask(%v): job status: Succeeded(%v), Failed(%v), Active(%v)\n",
+			"KubeTask(%v): job status: Successes(%v), Failures(%v)\n",
 			jobName,
-			successCheck,
-			result.Status.Failed == 1,
-			result.Status.Active == 1,
+			numberOfSuccesses,
+			numberOfFailures,
 		)
 
-		if successCheck > 0 {
+		if numberOfSuccesses > 0 {
 			fmt.Printf(
 				"KubeTask(%v): finished with success %q.\n",
 				jobName, result.GetObjectMeta().GetName(),
 			)
 			return nil
 		}
-		if result.Status.Failed == 1 {
+		if numberOfFailures > retries {
 			fmt.Printf(
 				"KubeTask(%v): finished with error %q.\n",
 				jobName, result.GetObjectMeta().GetName(),
