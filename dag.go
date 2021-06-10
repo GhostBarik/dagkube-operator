@@ -1,19 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"golang.org/x/sync/errgroup"
 )
 
 type TaskId int
-
-type TaskMetadata struct {
-	Name string
-	Image string  // url of the docker image (with tag)
-	Args []string // list of string arguments to pass
-	NumberOfRetries int
-	// TODO: add additional properties (e.g. container limits)
-}
 
 type Task interface {
 	GetId() TaskId
@@ -24,62 +17,53 @@ type Dag struct {
 	// our graph has always single defined root node, from which we start
 	RootTask Task
 	Tasks map[TaskId]Task
-	Edges map[TaskId][]TaskId
-	Errors e
+	Dependencies map[TaskId][]TaskId
+	ErrGroup *errgroup.Group
 }
 
-// FIXME: temporary structure, remove
-type Task2 struct {
-	NodeId TaskId
-	result chan bool
-}
-
-// FIXME: remove task2
-type WaitMap map[TaskId][]Task2
+type WaitMap map[TaskId][]chan bool
 type NotifyMap map[TaskId][]chan bool
 
+
 func (g *Dag) RunDag() {
+
+	g.ErrGroup,_ = errgroup.WithContext(context.Background())
 
 	// start from root node
 	fmt.Println("start graph processing")
 
 	// create set for storing visited nodes
-	visitedSet := SynchronizedIntSet{ set: make(map[int]bool) }
+	visitedSet := SynchronizedIntSet{set: make(map[int]bool)}
 
 	// create wait map (node -> list of nodes to wait for)
 	waitMap := make(WaitMap)
-	for startNodeId, children := range g.Edges {
-		waitMap[startNodeId] = make([]Task2, 0)
+
+	// create notify map (node -> list of nodes to notify)
+	notifyMap := make(NotifyMap)
+
+	// initialize both maps with channels
+	for startNodeId, children := range g.Dependencies {
 		for _, endNodeId := range children {
+
 			// create buffered channel with buffer size == 1
 			// this will prevent notifier nodes from blocking
 			// (i.e. while iterating through list of node to notify - in notifyMap[nodeId])
-			task := Task2{ endNodeId, make(chan bool, 1) }
-			waitMap[startNodeId] = append(waitMap[startNodeId], task)
+			ch := make(chan bool, 1)
+
+			// put channel to both maps (wait/notify)
+			waitMap[startNodeId] = append(waitMap[startNodeId], ch)
+			notifyMap[endNodeId] = append(notifyMap[endNodeId], ch)
 		}
 	}
 
 	fmt.Printf("wait map: %v\n", waitMap)
-
-	// create notify map (node -> list of nodes to notify)
-	notifyMap := make(NotifyMap)
-	for startNodeId, _ := range waitMap {
-		notifyMap[startNodeId] = make([]chan bool, 0)
-	}
-	for _, tasks := range waitMap {
-		for _, task := range tasks {
-			endNode := task.NodeId
-			notifyMap[endNode] = append(notifyMap[endNode], task.result)
-		}
-	}
-
 	fmt.Printf("notify map: %v\n", notifyMap)
 
 	singleRun := DagRun{
 		dag: *g,
 		visitedNodes: &visitedSet,
-		waitMap: waitMap,
-		notifyMap: notifyMap,
+		waitMap:      waitMap,
+		notifyMap:    notifyMap,
 	}
 
 	singleRun.processTask(g.RootTask.GetId())
@@ -88,39 +72,45 @@ func (g *Dag) RunDag() {
 type DagRun struct {
 	dag Dag
 	visitedNodes *SynchronizedIntSet
-	waitMap WaitMap
-	notifyMap NotifyMap
+	waitMap      WaitMap
+	notifyMap    NotifyMap
 }
 
-func (dagRun *DagRun) processTask (taskId TaskId) {
+func (dagRun *DagRun) processTask(taskId TaskId) error {
 
 	if ok := dagRun.visitedNodes.addElement(int(taskId)); !ok {
 		// node was already visited -> exit
-		return
+		return nil
 	}
 
 	graph := dagRun.dag
 
 	// run all children in parallel
-	for _, childId := range graph.Edges[taskId] {
-		go dagRun.processTask(childId)
+	for _, childId := range graph.Dependencies[taskId] {
+		dagRun.dag.ErrGroup.Go(func() error {
+			if err := dagRun.processTask(childId); err!=nil {
+				return err
+			}
+			return nil
+		})
 	}
 
 	// wait for completion for all dependencies
 	for _, resultCh := range dagRun.waitMap[taskId] {
-		<- resultCh.result
+		<-resultCh
 	}
 
 	// root node does not perform any processing
 	if taskId != graph.RootTask.GetId() {
-		// TODO: handle error (not necessary now)
-		_ = graph.Tasks[taskId].Run()
+		if err:=graph.Tasks[taskId].Run();err!=nil {
+			return err
+		}
 	}
 
 	// send completion signal to dependent nodes
 	for _, channel := range dagRun.notifyMap[taskId] {
 		channel <- true // signal completion
 	}
+
+	return nil
 }
-
-

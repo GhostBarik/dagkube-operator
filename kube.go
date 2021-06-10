@@ -19,8 +19,17 @@ type KubeTask struct {
 	// generated during graph parsing, do not change!
 	Id TaskId
 	// task metadata (e.g. which image to run, arguments etc.)
-	Metadata TaskMetadata
+	Metadata KubeTaskMetadata
 }
+
+type KubeTaskMetadata struct {
+	Name            string
+	Image           string   // url of the docker image (with tag)
+	Args            []string // list of string arguments to pass
+	NumberOfRetries int
+	// TODO: add additional properties (e.g. container limits)
+}
+
 
 func (n *KubeTask) GetId() TaskId {
 	return n.Id
