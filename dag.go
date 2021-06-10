@@ -2,59 +2,60 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 )
 
-type NodeId int
+type TaskId int
 
-type Node struct {
-	Id NodeId
+type TaskMetadata struct {
 	Name string
+	Image string  // url of the docker image (with tag)
+	Args []string // list of string arguments to pass
+	NumberOfRetries int
+	// TODO: add additional properties (e.g. container limits)
+}
+
+type Task interface {
+	GetId() TaskId
+	Run() error
 }
 
 type Graph struct {
-	RootNode Node
-	Nodes map[NodeId]Node
-	Edges map[NodeId][]NodeId
+	// our graph has always single defined root node, from which we start
+	RootNode Task
+	Nodes map[TaskId]Task
+	Edges map[TaskId][]TaskId
 }
 
-type SynchronizedIntSet struct {
-	smu sync.Mutex
-	set map[int]bool
+type KubeTask struct {
+	// generated during graph parsing, do not change!
+	Id TaskId
+	// task metadata (e.g. which image to run, arguments etc.)
+	Metadata TaskMetadata
 }
 
-func (s *SynchronizedIntSet) AddElement(elem int) bool {
-
-	// lock `visited` set to check its value
-	s.smu.Lock()
-
-	// release lock at the end of function call
-	defer s.smu.Unlock()
-
-	// check if not is already visited
-	if _, ok := s.set[elem]; ok {
-		// element is already in set -> return false
-		return false
-	}
-
-	// mark node as 'visited' to avoid running processing multiple times
-	s.set[elem] = true
-
-	// element was successfully added to set -> return true
-	return true
+func (n *KubeTask) GetId() TaskId {
+	return n.Id
 }
 
-type Task struct {
-	NodeId NodeId
+func (n *KubeTask) Run() error {
+	fmt.Printf("task[%v]: started\n", n.Metadata.Name)
+	time.Sleep(1 * time.Second)
+	fmt.Printf("task[%v]: finished\n", n.Metadata.Name)
+	return nil
+}
+
+// FIXME: temporary structure, remove
+type Task2 struct {
+	NodeId TaskId
 	result chan bool
 }
 
-type WaitMap map[NodeId][]Task
-type NotifyMap map[NodeId][]chan bool
+// FIXME: remove task2
+type WaitMap map[TaskId][]Task2
+type NotifyMap map[TaskId][]chan bool
 
-
-func (g *Graph) RunGraph() {
+func (g *Graph) runGraph () {
 
 	// start from root node
 	fmt.Println("start graph processing")
@@ -65,12 +66,12 @@ func (g *Graph) RunGraph() {
 	// create wait map (node -> list of nodes to wait for)
 	waitMap := make(WaitMap)
 	for startNodeId, children := range g.Edges {
-		waitMap[startNodeId] = make([]Task, 0)
+		waitMap[startNodeId] = make([]Task2, 0)
 		for _, endNodeId := range children {
 			// create buffered channel with buffer size == 1
 			// this will prevent notifier nodes from blocking
 			// (i.e. while iterating through list of node to notify - in notifyMap[nodeId])
-			task := Task{ endNodeId, make(chan bool, 1) }
+			task := Task2{ endNodeId, make(chan bool, 1) }
 			waitMap[startNodeId] = append(waitMap[startNodeId], task)
 		}
 	}
@@ -84,47 +85,59 @@ func (g *Graph) RunGraph() {
 	}
 	for _, tasks := range waitMap {
 		for _, task := range tasks {
-			notifyMap[task.NodeId] = append(notifyMap[task.NodeId], task.result)
+			endNode := task.NodeId
+			notifyMap[endNode] = append(notifyMap[endNode], task.result)
 		}
 	}
 
 	fmt.Printf("notify map: %v\n", notifyMap)
 
-	g.ProcessNode(g.RootNode.Id, &visitedSet, waitMap, notifyMap)
+	singleRun := DagRun{
+		graph: *g,
+		visitedNodes: &visitedSet,
+		waitMap: waitMap,
+		notifyMap: notifyMap,
+	}
 
-	fmt.Println("graph processing has finished")
+	singleRun.processTask(g.RootNode.GetId())
 }
 
-func (g *Graph) ProcessNode(nodeId NodeId, visitedNodes *SynchronizedIntSet, waitMap WaitMap, notifyMap NotifyMap) {
+type DagRun struct {
+	graph Graph
+	visitedNodes *SynchronizedIntSet
+	waitMap WaitMap
+	notifyMap NotifyMap
+}
 
-	if ok := visitedNodes.AddElement(int(nodeId)); !ok {
+func (dagRun *DagRun) processTask (taskId TaskId) {
+
+	if ok := dagRun.visitedNodes.addElement(int(taskId)); !ok {
 		// node was already visited -> exit
 		return
 	}
 
+	graph := dagRun.graph
+
 	// run all children in parallel
-	for _, childId := range g.Edges[nodeId] {
-		go g.ProcessNode(childId, visitedNodes, waitMap, notifyMap)
+	for _, childId := range graph.Edges[taskId] {
+		go dagRun.processTask(childId)
 	}
 
 	// wait for completion for all dependencies
-	for _, resultCh := range waitMap[nodeId] {
+	for _, resultCh := range dagRun.waitMap[taskId] {
 		<- resultCh.result
 	}
 
-	// TODO: add Kubernetes API client logic ///
 	// root node does not perform any processing
-	if nodeId != g.RootNode.Id {
-		// simulate some work for non-root note
-		node := g.Nodes[nodeId]
-		fmt.Printf("node[%v]: processing ...\n", node)
-		time.Sleep(2 * time.Second)
-		fmt.Printf("node[%v]: finished\n", node)
+	if taskId != graph.RootNode.GetId() {
+		// TODO: handle error (not necessary now)
+		_ = graph.Nodes[taskId].Run()
 	}
 
 	// send completion signal to dependent nodes
-	for _, channel := range notifyMap[nodeId] {
+	for _, channel := range dagRun.notifyMap[taskId] {
 		channel <- true // signal completion
 	}
 }
+
 
