@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -18,10 +19,10 @@ type TaskDependencyGraph struct {
 	Dependencies map[TaskId][]TaskId
 }
 
-type WaitMap map[TaskId][]chan bool
-type NotifyMap map[TaskId][]chan bool
+type WaitMap map[TaskId][]chan error
+type NotifyMap map[TaskId][]chan error
 
-func (g *TaskDependencyGraph) runGraph() {
+func (g *TaskDependencyGraph) runGraph() DagRun {
 
 	// start from root node
 	fmt.Println("start graph processing")
@@ -42,7 +43,7 @@ func (g *TaskDependencyGraph) runGraph() {
 			// create buffered channel with buffer size == 1
 			// this will prevent notifier nodes from blocking
 			// (i.e. while iterating through list of node to notify - in notifyMap[nodeId])
-			ch := make(chan bool, 1)
+			ch := make(chan error, 1)
 
 			// put channel to both maps (wait/notify)
 			waitMap[startNodeId] = append(waitMap[startNodeId], ch)
@@ -58,9 +59,14 @@ func (g *TaskDependencyGraph) runGraph() {
 		visitedNodes: &visitedSet,
 		waitMap:      waitMap,
 		notifyMap:    notifyMap,
+		errors: make(chan error, len(g.Tasks)),
 	}
 
-	singleRun.processTask(g.RootTask.GetId())
+	return singleRun
+}
+
+func (dagRun *DagRun) run () {
+	dagRun.processTask(dagRun.graph.RootTask.GetId())
 }
 
 type DagRun struct {
@@ -68,6 +74,7 @@ type DagRun struct {
 	visitedNodes *SynchronizedIntSet
 	waitMap      WaitMap
 	notifyMap    NotifyMap
+	errors       chan error
 }
 
 func (dagRun *DagRun) processTask(taskId TaskId) {
@@ -88,8 +95,8 @@ func (dagRun *DagRun) processTask(taskId TaskId) {
 
 	// wait for completion for all dependencies
 	for _, resultCh := range dagRun.waitMap[taskId] {
-		dependencyResult := <-resultCh
-		if !dependencyResult {
+		result := <-resultCh
+		if result != nil {
 			dependenciesWereSuccessful = false
 		}
 	}
@@ -101,13 +108,23 @@ func (dagRun *DagRun) processTask(taskId TaskId) {
 	// root task does not perform any processing
 	if taskId != graph.RootTask.GetId() && dependenciesWereSuccessful {
 		err := graph.Tasks[taskId].Run()
+		dagRun.errors <- err
 		if err != nil {
 			currentJobSuccess = false
 		}
 	}
 
+	// close errors channel
+	if taskId == graph.RootTask.GetId() {
+		close(dagRun.errors)
+	}
+
 	// send completion signal to dependent nodes
 	for _, channel := range dagRun.notifyMap[taskId] {
-		channel <- currentJobSuccess // signal completion
+		if !currentJobSuccess {
+			channel <- errors.New(fmt.Sprintf("task[%v]: failed", taskId)) // signal completion
+		} else {
+			channel <- nil
+		}
 	}
 }

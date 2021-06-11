@@ -42,7 +42,7 @@ func (n *KubeTask) Run() error {
 	containerName := "dagkube-job-container"
 	retries := int32(2)
 	jobName := jobBaseName + "-" + n.Metadata.Name
-	params := []string{"1", "0.5"}
+	params := []string{"1", "0.3"}
 
 	jobDefinition := CreateJobDefinition(jobName, image, containerName, params, int32(retries))
 
