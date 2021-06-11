@@ -1,6 +1,6 @@
 package main
 
-func createTestGraph() TaskDependencyGraph {
+func createTestGraph() Dag {
 
 	namespace := "default"
 
@@ -50,5 +50,5 @@ func createTestGraph() TaskDependencyGraph {
 	edges[nodeD.Id] = []TaskId{}
 	edges[rootNode.Id] = []TaskId{nodeA.Id, nodeB.Id, nodeC.Id, nodeD.Id}
 
-	return TaskDependencyGraph{&rootNode, nodes, edges}
+	return Dag{&rootNode, nodes, edges}
 }

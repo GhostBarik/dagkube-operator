@@ -5,9 +5,9 @@ import "fmt"
 func main() {
 
 	g := createTestGraph()
-	r := g.runGraph()
+	r := g.DagRun()
 
-	r.run()
+	r.Run()
 	for res := range r.errors {
 		fmt.Println(res)
 	}
