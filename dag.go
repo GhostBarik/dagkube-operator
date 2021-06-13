@@ -1,10 +1,15 @@
 package main
 
 import (
-	"context"
+	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 )
+
+type TaskResult struct {
+	status bool
+	err error
+	message string
+}
 
 type TaskId int
 
@@ -18,16 +23,14 @@ type Dag struct {
 	RootTask Task
 	Tasks map[TaskId]Task
 	Dependencies map[TaskId][]TaskId
-	ErrGroup *errgroup.Group
+	Errors chan error
 }
 
-type WaitMap map[TaskId][]chan bool
-type NotifyMap map[TaskId][]chan bool
+type WaitMap map[TaskId][]chan TaskResult
+type NotifyMap map[TaskId][]chan TaskResult
 
 
-func (g *Dag) RunDag() {
-
-	g.ErrGroup,_ = errgroup.WithContext(context.Background())
+func (g *Dag) DagRun() DagRun {
 
 	// start from root node
 	fmt.Println("start graph processing")
@@ -48,7 +51,7 @@ func (g *Dag) RunDag() {
 			// create buffered channel with buffer size == 1
 			// this will prevent notifier nodes from blocking
 			// (i.e. while iterating through list of node to notify - in notifyMap[nodeId])
-			ch := make(chan bool, 1)
+			ch := make(chan TaskResult, 1)
 
 			// put channel to both maps (wait/notify)
 			waitMap[startNodeId] = append(waitMap[startNodeId], ch)
@@ -59,57 +62,82 @@ func (g *Dag) RunDag() {
 	fmt.Printf("wait map: %v\n", waitMap)
 	fmt.Printf("notify map: %v\n", notifyMap)
 
-	singleRun := DagRun{
-		dag: *g,
+
+	dagRun := DagRun{
+		dag:        *g,
 		visitedNodes: &visitedSet,
 		waitMap:      waitMap,
 		notifyMap:    notifyMap,
+		errors: make(chan error, len(g.Tasks)),
 	}
 
-	singleRun.processTask(g.RootTask.GetId())
+	return dagRun
+}
+
+func (dagRun *DagRun) Run() {
+	dagRun.processTask(dagRun.dag.RootTask.GetId())
 }
 
 type DagRun struct {
-	dag Dag
+	dag        Dag
 	visitedNodes *SynchronizedIntSet
 	waitMap      WaitMap
 	notifyMap    NotifyMap
+	errors       chan error
 }
 
 func (dagRun *DagRun) processTask(taskId TaskId) error {
 
+	var(
+		taskDependencyStatus bool = true
+		taskStatus bool = true
+	)
 	if ok := dagRun.visitedNodes.addElement(int(taskId)); !ok {
 		// node was already visited -> exit
 		return nil
 	}
 
-	graph := dagRun.dag
-
 	// run all children in parallel
-	for _, childId := range graph.Dependencies[taskId] {
-		dagRun.dag.ErrGroup.Go(func() error {
-			if err := dagRun.processTask(childId); err!=nil {
-				return err
-			}
-			return nil
-		})
+	for _, childId := range dagRun.dag.Dependencies[taskId] {
+		go dagRun.processTask(childId)
 	}
 
 	// wait for completion for all dependencies
 	for _, resultCh := range dagRun.waitMap[taskId] {
-		<-resultCh
+		result := <-resultCh
+		if result.err != nil {
+			taskDependencyStatus = result.status
+		}
 	}
 
-	// root node does not perform any processing
-	if taskId != graph.RootTask.GetId() {
-		if err:=graph.Tasks[taskId].Run();err!=nil {
-			return err
+	fmt.Printf("task[%v]: state for all dependencies -  %v\n", taskId, taskDependencyStatus)
+
+	// root task does not perform any processing
+	if taskId != dagRun.dag.RootTask.GetId() && taskDependencyStatus {
+		err := dagRun.dag.Tasks[taskId].Run()
+		if err != nil {
+			dagRun.errors <- err
+			taskStatus = false
 		}
+	}
+
+	// close errors channel
+	if taskId == dagRun.dag.RootTask.GetId() {
+		close(dagRun.errors)
 	}
 
 	// send completion signal to dependent nodes
 	for _, channel := range dagRun.notifyMap[taskId] {
-		channel <- true // signal completion
+		if !taskStatus {
+			err := errors.New(fmt.Sprintf("task[%v]: failed", taskId))
+			channel <- TaskResult{
+				status: false,
+				err: err, // signal completion,
+				message: err.Error(),
+			}
+		} else {
+			channel <- TaskResult{status: true}
+		}
 	}
 
 	return nil
